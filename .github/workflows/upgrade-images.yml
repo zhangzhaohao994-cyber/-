@@ -1,0 +1,68 @@
+name: Upgrade exhibition images
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/upgrade-images.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download original artist portraits
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/140 Safari/537.36'
+          REF='https://www.artda.cn/xingweidangan-c-12146.html'
+          curl -fL --retry 4 --retry-delay 2 -A "$UA" -e "$REF" 'https://www.artda.cn/attachment/image/221221/56.jpg' -o assets/highest-hq.jpg
+          curl -fL --retry 4 --retry-delay 2 -A "$UA" -e "$REF" 'https://www.artda.cn/attachment/image/221221/382.jpg' -o assets/situ-hq.jpg
+          curl -fL --retry 4 --retry-delay 2 -A "$UA" -e "$REF" 'https://www.artda.cn/attachment/image/221221/312.jpg' -o assets/lu-desheng-hq.jpg
+          python - <<'PY'
+          from pathlib import Path
+          for name in ['highest-hq.jpg','situ-hq.jpg','lu-desheng-hq.jpg']:
+              p=Path('assets')/name
+              b=p.read_bytes()
+              assert len(b)>30000, (name,len(b))
+              assert b[:2]==b'\xff\xd8', (name,b[:8])
+              print(name,len(b))
+          PY
+      - name: Convert existing archive asset to real JPEG
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d assets/archive.b64 > assets/archive-hq.jpg
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('assets/archive-hq.jpg')
+          b=p.read_bytes()
+          assert len(b)>10000
+          assert b[:2]==b'\xff\xd8'
+          print('archive-hq.jpg',len(b))
+          PY
+      - name: Point page at real image files
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('index.html')
+          s=p.read_text()
+          s=s.replace('./assets/archive-v3.webp','./assets/archive-hq.jpg?v=4')
+          s=s.replace('./assets/highest-v3.jpg','./assets/highest-hq.jpg?v=4')
+          s=s.replace('./assets/situ-v3.jpg','./assets/situ-hq.jpg?v=4')
+          s=s.replace('./assets/lu-desheng-v3.webp','./assets/lu-desheng-hq.jpg?v=4')
+          p.write_text(s)
+          PY
+      - name: Commit upgraded images
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html assets/highest-hq.jpg assets/situ-hq.jpg assets/lu-desheng-hq.jpg assets/archive-hq.jpg
+          git diff --cached --quiet && exit 0
+          git commit -m 'Use real high-resolution image files'
+          git push
